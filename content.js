@@ -2,139 +2,143 @@
 (function() {
   console.log('[Gemini Extension] Content script loaded');
 
-  // ONLY target the Google Maps review reply box - NOT search bars
+  // Target the Google Maps review reply box
   const replySelectors = [
-    // Google Maps specific reply box selectors
-    'div[aria-label="Replying publicly"]',
-    'div[contenteditable="true"][jsname]',
-    // Only target textbox if it's inside a reply container
-    'div.VaHEVc div[contenteditable="true"]',
-    'div[role="dialog"] div[contenteditable="true"]',
-    'textarea[aria-label*="reply" i]',
-    'textarea[aria-label*="comment" i]',
+    'div[contenteditable="true"]',
+    'textarea',
   ];
 
-  // Elements to EXCLUDE - these are NOT reply boxes
-  const excludeSelectors = [
-    // Search bars
-    '[aria-label*="search" i]',
-    '.gLFyf', // Google search input
-    '[role="combobox"]', // Search suggestions
-    // Navigation/UI elements
-    '[role="navigation"]',
-    'nav'
-  ];
-
-  function isExcluded(element) {
-    // Check if element or any parent is excluded
+  function isReplyBox(element) {
+    // Check if this is actually a reply box by looking at parent structure
+    if (!element) return false;
+    
+    const text = (element.getAttribute('aria-label') || '').toLowerCase();
+    const parent = element.parentElement;
+    const parentText = (parent?.innerText || '').toLowerCase();
+    
+    // Look for "replying publicly" text nearby
+    if (text.includes('replying') || parentText.includes('replying publicly')) {
+      return true;
+    }
+    
+    // Check if element has placeholder or aria-label mentioning reply/comment
+    const placeholder = element.getAttribute('placeholder') || '';
+    if (placeholder.includes('reply') || placeholder.includes('comment')) {
+      return true;
+    }
+    
+    // Check parent classes
+    if (parent?.className?.includes('reply') || parent?.className?.includes('comment')) {
+      return true;
+    }
+    
+    // Check for "Replying publicly" in nearby text
     let current = element;
-    while (current && current !== document.body) {
-      let isExcludedElement = false;
-      excludeSelectors.forEach(selector => {
-        try {
-          if (current.matches(selector)) {
-            isExcludedElement = true;
-          }
-        } catch (e) {}
-      });
-      if (isExcludedElement) return true;
+    for (let i = 0; i < 10; i++) {
+      if (!current) break;
+      const html = current.innerHTML || '';
+      if (html.includes('Replying publicly')) {
+        return true;
+      }
       current = current.parentElement;
     }
-    return false;
-  }
-
-  function isInReplyContainer(element) {
-    // Check if element is inside a Google Maps review reply container
-    let current = element;
-    while (current && current !== document.body) {
-      const parent = current.parentElement;
-      
-      // Check for Google Maps reply dialog patterns
-      if (parent) {
-        // Reply interface has specific structure
-        const hasReplyInterface = 
-          parent.querySelector('[aria-label="Replying publicly"]') ||
-          parent.getAttribute('aria-label') === 'Replying publicly' ||
-          parent.className.includes('VaHEVc') ||
-          parent.className.includes('KuKPRc');
-        
-        if (hasReplyInterface) {
-          console.log('[Gemini Extension] Found reply container');
-          return true;
-        }
-      }
-      
-      current = parent;
-    }
+    
     return false;
   }
 
   function extractRating(replyField) {
-    // Find the star rating from the review
-    let element = replyField;
-    let rating = 5; // Default to 5 if not found
-    let depth = 0;
-    const maxDepth = 30;
+    let rating = 5;
     
-    // Search up the DOM tree for rating information
-    while (element && depth < maxDepth) {
-      element = element.parentElement;
-      depth++;
+    // Search up the DOM tree
+    let current = replyField;
+    for (let depth = 0; depth < 30; depth++) {
+      if (!current) break;
       
-      // Look for aria-label with rating (e.g., "5 out of 5 stars")
-      const ariaLabel = element?.getAttribute('aria-label') || '';
-      if (ariaLabel.includes('out of 5')) {
-        const match = ariaLabel.match(/(\d)\s+out of 5/);
-        if (match) {
-          rating = parseInt(match[1]);
-          console.log('[Gemini Extension] Found rating:', rating, 'from aria-label:', ariaLabel);
-          return rating;
-        }
+      // Check aria-label for rating
+      const ariaLabel = current.getAttribute('aria-label') || '';
+      const match = ariaLabel.match(/(\d)\s+out of 5/);
+      if (match) {
+        rating = parseInt(match[1]);
+        console.log('[Gemini Extension] Found rating from aria-label:', rating);
+        return rating;
       }
       
-      // Look for Google Maps star elements (i.e., filled stars)
-      const starElements = element?.querySelectorAll?.('i.material-icons-extended');
-      if (starElements && starElements.length > 0) {
-        let filledStars = 0;
-        starElements.forEach(star => {
-          const className = star.className || '';
-          // lMAmUc = filled star, VOmEhb = empty star
-          if (className.includes('lMAmUc')) {
-            filledStars++;
-          }
+      // Check for star elements
+      const stars = current.querySelectorAll?.('i.material-icons-extended');
+      if (stars && stars.length > 0) {
+        let filled = 0;
+        stars.forEach(s => {
+          if (s.className.includes('lMAmUc')) filled++;
         });
-        if (filledStars > 0 && filledStars <= 5) {
-          rating = filledStars;
-          console.log('[Gemini Extension] Found rating:', rating, 'from star elements');
-          return rating;
+        if (filled > 0 && filled <= 5) {
+          console.log('[Gemini Extension] Found rating from stars:', filled);
+          return filled;
         }
       }
       
-      // Look for role="img" with aria-label containing stars
-      const imgElements = element?.querySelectorAll?.('span[role="img"][aria-label*="star"]');
-      if (imgElements && imgElements.length > 0) {
-        imgElements.forEach(img => {
-          const ariaLabel = img.getAttribute('aria-label') || '';
-          const match = ariaLabel.match(/(\d)\s+out of 5\s+stars/);
-          if (match) {
-            rating = parseInt(match[1]);
-            console.log('[Gemini Extension] Found rating:', rating, 'from img aria-label');
+      // Check role=img with aria-label
+      const imgs = current.querySelectorAll?.('span[role="img"]');
+      if (imgs) {
+        imgs.forEach(img => {
+          const label = img.getAttribute('aria-label') || '';
+          const m = label.match(/(\d)\s+out of 5\s+stars?/);
+          if (m) {
+            rating = parseInt(m[1]);
+            console.log('[Gemini Extension] Found rating from img:', rating);
           }
         });
         if (rating !== 5) return rating;
       }
+      
+      current = current.parentElement;
     }
     
-    console.log('[Gemini Extension] Using default rating: 5');
+    console.log('[Gemini Extension] Using default rating:', rating);
     return rating;
   }
 
-  function createGenerateButton() {
-    const button = document.createElement('button');
-    button.innerHTML = '🧠 Generate Reply';
-    button.className = 'gemini-generate-btn';
-    button.type = 'button';
-    button.style.cssText = `
+  function findCommentText(replyField) {
+    let commentText = '';
+    let current = replyField;
+    
+    for (let depth = 0; depth < 30; depth++) {
+      if (!current) break;
+      
+      const text = (current.innerText || current.textContent || '').trim();
+      if (text && text.length > 20 && text.length < 5000) {
+        const lines = text.split('\n').filter(l => l.trim().length > 0);
+        
+        if (lines.length >= 1 && lines.length <= 25) {
+          const filtered = lines.filter(l => {
+            const lower = l.toLowerCase();
+            return !lower.match(/(reply|cancel|delete|report|additional|new|replying|this customer|owner|local guide|ago|photo)/i) &&
+                   !lower.match(/(star|out of 5)/i) &&
+                   l.trim().length > 10 &&
+                   l.trim().length < 500;
+          });
+          
+          if (filtered.length > 0) {
+            commentText = filtered.slice(0, 5).join(' ').trim().replace(/\s+/g, ' ');
+            if (commentText.length > 15) {
+              console.log('[Gemini Extension] Found review text:', commentText.substring(0, 80));
+              return commentText;
+            }
+          }
+        }
+      }
+      
+      current = current.parentElement;
+    }
+    
+    return commentText || 'User review';
+  }
+
+  function createButton() {
+    const btn = document.createElement('button');
+    btn.textContent = '🧠 Generate Reply';
+    btn.className = 'gemini-reply-btn';
+    btn.type = 'button';
+    btn.style.cssText = `
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       color: white;
       padding: 10px 18px;
@@ -143,229 +147,92 @@
       font-size: 13px;
       font-weight: 600;
       cursor: pointer;
-      margin: 10px 5px 10px 0;
+      margin: 10px 5px;
       box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
-      transition: all 0.3s;
-      display: inline-block;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif;
     `;
-    return button;
+    return btn;
   }
 
-  function findCommentText(replyField) {
-    // Find the review text associated with this reply field
-    let element = replyField;
-    let commentText = '';
-    let depth = 0;
-    const maxDepth = 25;
+  function attachButton(field) {
+    if (field.classList.contains('gemini-has-btn')) return;
+    if (!isReplyBox(field)) return;
     
-    // Search up the DOM tree for comment/review content
-    while (element && !commentText && element.parentElement && depth < maxDepth) {
-      element = element.parentElement;
-      depth++;
+    field.classList.add('gemini-has-btn');
+    
+    const btn = createButton();
+    field.parentElement.appendChild(btn);
+    
+    console.log('[Gemini Extension] Button attached!');
+    
+    btn.addEventListener('click', () => {
+      btn.disabled = true;
+      btn.textContent = '⏳ Generating...';
       
-      // Skip elements that are too large
-      if (element.children && element.children.length > 100) continue;
+      const comment = findCommentText(field);
+      const rating = extractRating(field);
       
-      // Get text content
-      const text = (element.innerText || element.textContent || '').trim();
-      
-      if (text && text.length > 15 && text.length < 5000) {
-        const lines = text.split('\n')
-          .map(l => l.trim())
-          .filter(l => l.length > 0);
-        
-        // Look for review text patterns (usually 1-20 lines)
-        if (lines.length >= 1 && lines.length <= 20) {
-          // Filter out UI elements and metadata
-          const reviewLines = lines.filter(line => 
-            !line.match(/^(Reply|Cancel|Delete|Report|Additional|NEW|ago|photos?|reviews?|Local Guide|Owner|Replying publicly|This customer will be|notified|visible|Business Profile)/i) &&
-            !line.match(/(days?|hours?|minutes?|weeks?|months?|years?)\s+(ago|later)/i) &&
-            !line.match(/^[\d]+\s*(out of|\/)/i) &&
-            line.length > 10 &&
-            line.length < 500
-          );
-          
-          if (reviewLines.length > 0) {
-            // Take the review text (usually the first meaningful content)
-            commentText = reviewLines.slice(0, 5).join(' ').trim();
-            
-            // Remove extra whitespace
-            commentText = commentText.replace(/\s+/g, ' ');
-          }
-        }
-      }
-    }
-    
-    return commentText || 'User review';
-  }
-
-  function attachButtonToField(replyField) {
-    // Double-check this is actually a reply field
-    if (!isInReplyContainer(replyField)) {
-      console.log('[Gemini Extension] Field not in reply container, skipping');
-      return;
-    }
-
-    // Check if already attached
-    if (replyField.classList.contains('gemini-button-attached')) {
-      return;
-    }
-    
-    replyField.classList.add('gemini-button-attached');
-    
-    const button = createGenerateButton();
-    
-    // Insert button right after the reply field
-    if (replyField.parentElement) {
-      const nextElement = replyField.nextElementSibling;
-      if (nextElement) {
-        replyField.parentElement.insertBefore(button, nextElement);
-      } else {
-        replyField.parentElement.appendChild(button);
-      }
-    }
-
-    console.log('[Gemini Extension] Button attached to reply field');
-
-    button.addEventListener('click', async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      button.disabled = true;
-      button.innerHTML = '⏳ Generating...';
-
-      try {
-        chrome.storage.sync.get(['tone', 'model'], (result) => {
-          const tone = result.tone || 'professional';
-          const model = result.model || 'gemini-2.5-flash';
-          const commentText = findCommentText(replyField);
-          const rating = extractRating(replyField);
-
-          console.log('[Gemini Extension] Review text:', commentText.substring(0, 100));
-          console.log('[Gemini Extension] Review rating:', rating, 'stars');
-          console.log('[Gemini Extension] Generating reply...');
-
-          chrome.runtime.sendMessage(
-            { action: 'generateReply', comment: commentText, tone, model, rating },
-            (response) => {
-              if (response && response.success) {
-                // Set the reply in the text field
-                if (replyField.contentEditable === 'true') {
-                  replyField.innerText = response.reply;
-                  replyField.textContent = response.reply;
-                  replyField.focus();
-                  
-                  // Trigger input events
-                  const inputEvent = new Event('input', { bubbles: true });
-                  const changeEvent = new Event('change', { bubbles: true });
-                  replyField.dispatchEvent(inputEvent);
-                  replyField.dispatchEvent(changeEvent);
-                  
-                  console.log('[Gemini Extension] Reply successfully inserted');
-                } else if (replyField.tagName === 'TEXTAREA') {
-                  replyField.value = response.reply;
-                  replyField.focus();
-                  
-                  const inputEvent = new Event('input', { bubbles: true });
-                  replyField.dispatchEvent(inputEvent);
-                }
-                
-                button.innerHTML = '✓ Generated!';
-                setTimeout(() => {
-                  button.innerHTML = '🧠 Generate Reply';
-                  button.disabled = false;
-                }, 2000);
-              } else {
-                const errorMsg = response?.error || 'Unknown error';
-                console.error('[Gemini Extension] Error:', errorMsg);
-                alert('Error: ' + errorMsg);
-                button.innerHTML = '🧠 Generate Reply';
-                button.disabled = false;
-              }
+      chrome.storage.sync.get(['tone', 'model'], (result) => {
+        chrome.runtime.sendMessage({
+          action: 'generateReply',
+          comment,
+          tone: result.tone || 'professional',
+          model: result.model || 'gemini-2.5-flash',
+          rating
+        }, (response) => {
+          if (response?.success) {
+            if (field.contentEditable === 'true') {
+              field.textContent = response.reply;
+              field.innerText = response.reply;
+            } else {
+              field.value = response.reply;
             }
-          );
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+            field.dispatchEvent(new Event('change', { bubbles: true }));
+            
+            btn.textContent = '✓ Generated!';
+            setTimeout(() => {
+              btn.textContent = '🧠 Generate Reply';
+              btn.disabled = false;
+            }, 2000);
+          } else {
+            alert('Error: ' + (response?.error || 'Unknown'));
+            btn.textContent = '🧠 Generate Reply';
+            btn.disabled = false;
+          }
         });
-      } catch (error) {
-        console.error('[Gemini Extension] Exception:', error);
-        alert('Error generating reply: ' + error.message);
-        button.innerHTML = '🧠 Generate Reply';
-        button.disabled = false;
-      }
+      });
     });
   }
 
-  // Watch for reply interface to appear
-  const observer = new MutationObserver((mutations) => {
-    mutations.forEach((mutation) => {
-      mutation.addedNodes.forEach((node) => {
-        if (node.nodeType === Node.ELEMENT_NODE) {
-          let fields = [];
-          
-          try {
-            if (node.querySelectorAll) {
-              fields = Array.from(node.querySelectorAll(replySelectors.join(',')));
-            }
-          } catch (e) {}
-          
-          // Check node itself
-          if (node.matches) {
-            replySelectors.forEach(selector => {
-              try {
-                if (node.matches(selector) && !isExcluded(node)) {
-                  fields.push(node);
-                }
-              } catch (e) {}
-            });
-          }
-          
-          fields.forEach(field => {
-            if (!field.classList.contains('gemini-button-attached') && 
-                field.offsetParent !== null &&
-                !isExcluded(field)) {
-              attachButtonToField(field);
-            }
-          });
-        }
-      });
+  // Watch for changes
+  const observer = new MutationObserver(() => {
+    document.querySelectorAll('div[contenteditable="true"], textarea').forEach(field => {
+      if (!field.classList.contains('gemini-has-btn')) {
+        attachButton(field);
+      }
     });
   });
 
   observer.observe(document.body, {
     childList: true,
     subtree: true,
-    attributes: true,
-    attributeFilter: ['contenteditable', 'aria-label', 'data-text', 'role']
+    attributes: true
   });
 
   // Initial scan
-  console.log('[Gemini Extension] Performing initial scan');
-  
-  replySelectors.forEach(selector => {
-    try {
-      document.querySelectorAll(selector).forEach(field => {
-        if (!field.classList.contains('gemini-button-attached') && 
-            field.offsetParent !== null &&
-            !isExcluded(field)) {
-          attachButtonToField(field);
-        }
-      });
-    } catch (e) {}
+  document.querySelectorAll('div[contenteditable="true"], textarea').forEach(field => {
+    attachButton(field);
   });
 
-  // Periodic scan every 2 seconds
+  // Keep checking every 2 seconds
   setInterval(() => {
-    replySelectors.forEach(selector => {
-      try {
-        document.querySelectorAll(selector).forEach(field => {
-          if (!field.classList.contains('gemini-button-attached') && 
-              field.offsetParent !== null &&
-              !isExcluded(field)) {
-            attachButtonToField(field);
-          }
-        });
-      } catch (e) {}
+    document.querySelectorAll('div[contenteditable="true"], textarea').forEach(field => {
+      if (!field.classList.contains('gemini-has-btn')) {
+        attachButton(field);
+      }
     });
   }, 2000);
 
-  console.log('[Gemini Extension] Content script initialized');
+  console.log('[Gemini Extension] Ready to attach buttons');
 })();
