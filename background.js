@@ -4,15 +4,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     generateReply(request.comment, request.tone, request.rating).then(reply => {
       sendResponse({ success: true, reply });
     }).catch(error => {
-      console.error('Generate reply error:', error);
+      console.error('[Gemini Extension] Generate reply error:', error);
       sendResponse({ success: false, error: error.message });
     });
-    return true;
+    return true; // Keep channel open for async response
   } else if (request.action === 'testAPI') {
     testAPI(request.apiKey).then(() => {
       sendResponse({ success: true });
     }).catch(error => {
-      console.error('Test API error:', error);
+      console.error('[Gemini Extension] Test API error:', error);
       sendResponse({ success: false, error: error.message });
     });
     return true;
@@ -31,66 +31,39 @@ async function generateReply(comment, tone = 'professional', rating = 5) {
         const model = result.model || 'gemini-2.5-flash';
         const apiKey = result.apiKey.trim();
 
-        // Create context-aware prompt based on review rating
-        let replyContext = '';
-        let replyGuidance = '';
-
+        // Determine reply context based on rating
+        let context = '';
         if (rating <= 2) {
-          // Negative review - acknowledge concerns, offer solutions
-          replyContext = 'The customer left a negative review (1-2 stars). ';
-          replyGuidance = `Generate a professional, empathetic response that:
-- Acknowledges their specific concerns
-- Shows genuine care for their experience
-- Offers a solution or improvement action
-- Invites them to contact management for resolution
-- Is 2-3 sentences maximum`;
+          context = 'The customer left a negative review (1-2 stars). Acknowledge their specific concerns, apologize sincerely, offer concrete solutions to address their issues, and invite them to contact you directly to resolve the matter.';
         } else if (rating === 3) {
-          // Mixed review - acknowledge feedback
-          replyContext = 'The customer left a mixed review (3 stars). ';
-          replyGuidance = `Generate a professional response that:
-- Acknowledges both positive and negative points
-- Thanks them for constructive feedback
-- Commits to addressing the concerns mentioned
-- Shows appreciation for their honesty
-- Is 2-3 sentences maximum`;
+          context = 'The customer left a mixed/neutral review (3 stars). Thank them for their feedback, acknowledge both what went well and what could be improved, and explain what steps you are taking to improve.';
         } else if (rating === 4) {
-          // Good review - appreciate and invite engagement
-          replyContext = 'The customer left a good review (4 stars). ';
-          replyGuidance = `Generate a professional, warm response that:
-- Thanks them for the positive feedback
-- Acknowledges what they appreciated
-- Addresses any minor concerns if mentioned
-- Invites them to revisit
-- Is 2-3 sentences maximum`;
+          context = 'The customer left a good review (4 stars). Thank them warmly for their kind words, mention specific positive aspects if possible, and let them know you value their feedback.';
         } else {
-          // Excellent review (5 stars) - express gratitude
-          replyContext = 'The customer left an excellent review (5 stars). ';
-          replyGuidance = `Generate a professional, warm response that:
-- Expresses genuine gratitude for the positive review
-- Acknowledges what made their experience great
-- Invites them to visit again or share with others
-- Builds customer loyalty
-- Is 2-3 sentences maximum`;
+          context = 'The customer left an excellent review (5 stars). Express genuine gratitude, appreciate their specific compliments, and invite them to visit again or try other offerings.';
         }
 
-        // Create the prompt
-        const prompt = `${replyContext}You are a professional business assistant generating a ${tone} reply to a customer review.
+        // Create the prompt based on review type
+        const prompt = `You are a professional business manager responding to a customer review on Google Maps.
 
-Customer Review: "${comment}"
+Customer Review (${rating} out of 5 stars): "${comment}"
 
-${replyGuidance}
+Context: ${context}
 
-Important: 
-- Keep the reply authentic and specific to their feedback
-- Do NOT use generic responses
-- Match the tone to the business context
-- Be professional yet warm
-- Do NOT include phrases like "Thank you for your feedback" as opening - be more specific
-- Focus on what makes the response valuable to the customer
+Generate a ${tone} reply that:
+- Is exactly 2-3 sentences (NOT longer)
+- Directly addresses the points made in the review
+- Shows genuine care and understanding
+- DOES NOT include generic phrases like "Thank you for your feedback"
+- Feels personal and authentic
+- Is appropriate for a business responding to this specific review
 
-Reply:`;
+Reply (2-3 sentences only):`;
 
-        console.log('[Gemini Extension] Rating:', rating, '| Model:', model);
+        console.log('[Gemini Extension] Sending request to Gemini API');
+        console.log('[Gemini Extension] Model:', model);
+        console.log('[Gemini Extension] Rating:', rating, 'stars');
+        console.log('[Gemini Extension] Tone:', tone);
 
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
           method: 'POST',
@@ -107,7 +80,7 @@ Reply:`;
               temperature: 0.7,
               topK: 40,
               topP: 0.95,
-              maxOutputTokens: 1024,
+              maxOutputTokens: 512,
             }
           })
         });
@@ -127,7 +100,7 @@ Reply:`;
         }
 
         const data = await response.json();
-        console.log('[Gemini Extension] API Response data:', data);
+        console.log('[Gemini Extension] API Response received');
 
         const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Could not generate reply. Please try again.';
         
@@ -135,6 +108,7 @@ Reply:`;
           throw new Error('Empty response from API. The model may be rate-limited or unavailable.');
         }
 
+        console.log('[Gemini Extension] Generated reply:', reply.substring(0, 100));
         resolve(reply.trim());
       } catch (error) {
         console.error('[Gemini Extension] Error in generateReply:', error);
@@ -178,7 +152,7 @@ async function testAPI(apiKey) {
       }
       
       return response.json().then(data => {
-        console.log('[Gemini Extension] Test API success:', data);
+        console.log('[Gemini Extension] Test API success');
         resolve();
       });
     }).catch(error => {
