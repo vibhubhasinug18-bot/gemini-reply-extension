@@ -7,7 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const statusDiv = document.getElementById('status');
 
   // Load saved settings
-  chrome.storage.sync.get(['apiKey', 'tone'], (result) => {
+  chrome.storage.sync.get(['apiKey', 'tone', 'model'], (result) => {
     if (result.apiKey) {
       apiKeyInput.value = result.apiKey.substring(0, 10) + '...'; // Show partial key
       apiKeyInput.placeholder = 'API Key already saved';
@@ -27,8 +27,8 @@ document.addEventListener('DOMContentLoaded', () => {
       updateStatus('✗ Please enter an API key', 'error');
       return;
     }
-    chrome.storage.sync.set({ apiKey }, () => {
-      updateStatus('✓ API Key saved!', 'success');
+    chrome.storage.sync.set({ apiKey, model: 'gemini-2.5-flash' }, () => {
+      updateStatus('✓ API Key saved! (Using Gemini 2.5 Flash)', 'success');
       apiKeyInput.value = '';
       apiKeyInput.placeholder = 'API Key updated';
     });
