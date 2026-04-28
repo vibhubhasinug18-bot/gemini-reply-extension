@@ -2,27 +2,70 @@
 (function() {
   console.log('[Gemini Extension] Content script loaded');
 
-  // Target common reply/comment text areas across different platforms
+  // ONLY target the Google Maps review reply box - NOT search bars
   const replySelectors = [
-    // Generic selectors
-    'textarea',
-    '[contenteditable="true"]',
-    '[role="textbox"]',
-    '.reply-input',
-    '.comment-input',
-    '#reply-text',
-    '[aria-label*="reply" i]',
-    '[aria-label*="comment" i]',
-    // Google Maps specific selectors
-    '[aria-label="Replying publicly"]',
+    // Google Maps specific reply box selectors
     'div[aria-label="Replying publicly"]',
-    'div[contenteditable="true"][data-text="true"]',
-    'div.VfPpkd-t08AT-Bz112c-M1sUe',
-    'div[data-replyingtextarea="true"]',
-    // Additional Google Maps selectors for newer layout
-    'div[role="textbox"][contenteditable="true"]',
-    'div[contenteditable="true"][data-initial-value]'
+    'div[contenteditable="true"][jsname]',
+    // Only target textbox if it's inside a reply container
+    'div.VaHEVc div[contenteditable="true"]',
+    'div[role="dialog"] div[contenteditable="true"]',
+    'textarea[aria-label*="reply" i]',
+    'textarea[aria-label*="comment" i]',
   ];
+
+  // Elements to EXCLUDE - these are NOT reply boxes
+  const excludeSelectors = [
+    // Search bars
+    '[aria-label*="search" i]',
+    '.gLFyf', // Google search input
+    '[role="combobox"]', // Search suggestions
+    // Navigation/UI elements
+    '[role="navigation"]',
+    'nav'
+  ];
+
+  function isExcluded(element) {
+    // Check if element or any parent is excluded
+    let current = element;
+    while (current && current !== document.body) {
+      excludeSelectors.forEach(selector => {
+        try {
+          if (current.matches(selector)) {
+            return true;
+          }
+        } catch (e) {}
+      });
+      current = current.parentElement;
+    }
+    return false;
+  }
+
+  function isInReplyContainer(element) {
+    // Check if element is inside a Google Maps review reply container
+    let current = element;
+    while (current && current !== document.body) {
+      const parent = current.parentElement;
+      
+      // Check for Google Maps reply dialog patterns
+      if (parent) {
+        // Reply interface has specific structure
+        const hasReplyInterface = 
+          parent.querySelector('[aria-label="Replying publicly"]') ||
+          parent.getAttribute('aria-label') === 'Replying publicly' ||
+          parent.className.includes('VaHEVc') ||
+          parent.className.includes('KuKPRc');
+        
+        if (hasReplyInterface) {
+          console.log('[Gemini Extension] Found reply container');
+          return true;
+        }
+      }
+      
+      current = parent;
+    }
+    return false;
+  }
 
   function createGenerateButton() {
     const button = document.createElement('button');
@@ -32,25 +75,27 @@
     button.style.cssText = `
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       color: white;
-      padding: 8px 16px;
+      padding: 10px 18px;
       border: none;
-      border-radius: 5px;
+      border-radius: 6px;
       font-size: 13px;
       font-weight: 600;
       cursor: pointer;
-      margin: 10px 0;
+      margin: 10px 5px 10px 0;
       box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
       transition: all 0.3s;
+      display: inline-block;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     `;
     return button;
   }
 
   function findCommentText(replyField) {
-    // Try to find the review/comment text
+    // Find the review text associated with this reply field
     let element = replyField;
     let commentText = '';
     let depth = 0;
-    const maxDepth = 20;
+    const maxDepth = 25;
     
     // Search up the DOM tree for comment/review content
     while (element && !commentText && element.parentElement && depth < maxDepth) {
@@ -58,35 +103,33 @@
       depth++;
       
       // Skip elements that are too large
-      if (element.children.length > 50) continue;
+      if (element.children && element.children.length > 100) continue;
       
       // Get text content
-      const text = element.innerText || element.textContent;
+      const text = (element.innerText || element.textContent || '').trim();
       
-      if (text && text.length > 15 && text.length < 3000) {
+      if (text && text.length > 15 && text.length < 5000) {
         const lines = text.split('\n')
           .map(l => l.trim())
           .filter(l => l.length > 0);
         
-        // Look for review text patterns
-        if (lines.length >= 1 && lines.length <= 15) {
-          // Filter out UI elements
+        // Look for review text patterns (usually 2-10 lines)
+        if (lines.length >= 1 && lines.length <= 20) {
+          // Filter out UI elements and metadata
           const reviewLines = lines.filter(line => 
-            !line.includes('Reply') && 
-            !line.includes('Cancel') && 
-            !line.includes('Delete') &&
-            !line.includes('Report') &&
-            !line.includes('Additional') &&
-            !line.includes('days ago') &&
-            !line.includes('hours ago') &&
-            !line.includes('minutes ago') &&
-            !line.includes('weeks ago') &&
-            !line.includes('months ago') &&
-            line.length > 10
+            !line.match(/^(Reply|Cancel|Delete|Report|Additional|NEW|ago|ago|photos?|reviews?|Local Guide|Owner|Replying publicly|This customer will be|notified|visible|Business Profile)/i) &&
+            !line.match(/(days?|hours?|minutes?|weeks?|months?|years?)\s+(ago|later)/i) &&
+            !line.match(/^[\d]+\s*(out of|\/)/i) &&
+            line.length > 10 &&
+            line.length < 500
           );
           
           if (reviewLines.length > 0) {
-            commentText = reviewLines.slice(0, 3).join(' ');
+            // Take the review text (usually the first meaningful content)
+            commentText = reviewLines.slice(0, 5).join(' ').trim();
+            
+            // Remove extra whitespace
+            commentText = commentText.replace(/\s+/g, ' ');
           }
         }
       }
@@ -96,7 +139,13 @@
   }
 
   function attachButtonToField(replyField) {
-    // Check if button already attached
+    // Double-check this is actually a reply field
+    if (!isInReplyContainer(replyField)) {
+      console.log('[Gemini Extension] Field not in reply container, skipping');
+      return;
+    }
+
+    // Check if already attached
     if (replyField.classList.contains('gemini-button-attached')) {
       return;
     }
@@ -105,14 +154,18 @@
     
     const button = createGenerateButton();
     
-    // Insert button after the reply field or inside parent
+    // Insert button right after the reply field, before Reply/Cancel buttons
     if (replyField.parentElement) {
-      replyField.parentElement.appendChild(button);
-    } else {
-      replyField.after(button);
+      // Find where to insert - usually right after the text area
+      const nextElement = replyField.nextElementSibling;
+      if (nextElement) {
+        replyField.parentElement.insertBefore(button, nextElement);
+      } else {
+        replyField.parentElement.appendChild(button);
+      }
     }
 
-    console.log('[Gemini Extension] Button attached to field');
+    console.log('[Gemini Extension] Button attached to reply field');
 
     button.addEventListener('click', async (e) => {
       e.preventDefault();
@@ -121,13 +174,12 @@
       button.innerHTML = '⏳ Generating...';
 
       try {
-        // Get tone preference
         chrome.storage.sync.get(['tone', 'model'], (result) => {
           const tone = result.tone || 'professional';
           const model = result.model || 'gemini-2.5-flash';
           const commentText = findCommentText(replyField);
 
-          console.log('[Gemini Extension] Generating reply for:', commentText);
+          console.log('[Gemini Extension] Generating reply for:', commentText.substring(0, 100));
 
           chrome.runtime.sendMessage(
             { action: 'generateReply', comment: commentText, tone, model },
@@ -139,11 +191,13 @@
                   replyField.textContent = response.reply;
                   replyField.focus();
                   
-                  // Trigger input event
+                  // Trigger input events
                   const inputEvent = new Event('input', { bubbles: true });
                   const changeEvent = new Event('change', { bubbles: true });
                   replyField.dispatchEvent(inputEvent);
                   replyField.dispatchEvent(changeEvent);
+                  
+                  console.log('[Gemini Extension] Reply inserted:', response.reply.substring(0, 100));
                 } else if (replyField.tagName === 'TEXTAREA') {
                   replyField.value = response.reply;
                   replyField.focus();
@@ -179,10 +233,8 @@
   // Watch for reply interface to appear
   const observer = new MutationObserver((mutations) => {
     mutations.forEach((mutation) => {
-      // Look for newly added elements
       mutation.addedNodes.forEach((node) => {
         if (node.nodeType === Node.ELEMENT_NODE) {
-          // Check if this node or its children contain reply fields
           let fields = [];
           
           try {
@@ -190,24 +242,24 @@
               fields = Array.from(node.querySelectorAll(replySelectors.join(',')));
             }
           } catch (e) {
-            // Skip invalid selector
+            console.log('[Gemini Extension] Selector error:', e.message);
           }
           
-          // Also check the node itself
+          // Check node itself
           if (node.matches) {
             replySelectors.forEach(selector => {
               try {
-                if (node.matches(selector)) {
+                if (node.matches(selector) && !isExcluded(node)) {
                   fields.push(node);
                 }
-              } catch (e) {
-                // Skip invalid selector
-              }
+              } catch (e) {}
             });
           }
           
           fields.forEach(field => {
-            if (!field.classList.contains('gemini-button-attached') && field.offsetParent !== null) {
+            if (!field.classList.contains('gemini-button-attached') && 
+                field.offsetParent !== null &&
+                !isExcluded(field)) {
               attachButtonToField(field);
             }
           });
@@ -223,34 +275,39 @@
     attributeFilter: ['contenteditable', 'aria-label', 'data-text', 'role']
   });
 
-  // Initial scan
+  // Initial scan - but only look in known reply containers
   console.log('[Gemini Extension] Performing initial scan');
+  
+  // First, find the reviews container
+  const reviewsContainer = document.querySelector('[aria-label="Reviews"]') || document.querySelector('.reviews-container');
+  const searchContainer = document.querySelector('.gLFyf')?.parentElement;
+  
   replySelectors.forEach(selector => {
     try {
       document.querySelectorAll(selector).forEach(field => {
-        if (!field.classList.contains('gemini-button-attached') && field.offsetParent !== null) {
+        if (!field.classList.contains('gemini-button-attached') && 
+            field.offsetParent !== null &&
+            !isExcluded(field)) {
           attachButtonToField(field);
         }
       });
-    } catch (e) {
-      // Skip invalid selectors
-    }
+    } catch (e) {}
   });
 
-  // Periodic scan every 1 second for dynamically loaded content
+  // Periodic scan every 2 seconds
   setInterval(() => {
     replySelectors.forEach(selector => {
       try {
         document.querySelectorAll(selector).forEach(field => {
-          if (!field.classList.contains('gemini-button-attached') && field.offsetParent !== null) {
+          if (!field.classList.contains('gemini-button-attached') && 
+              field.offsetParent !== null &&
+              !isExcluded(field)) {
             attachButtonToField(field);
           }
         });
-      } catch (e) {
-        // Skip invalid selectors
-      }
+      } catch (e) {}
     });
-  }, 1000);
+  }, 2000);
 
   console.log('[Gemini Extension] Content script initialized');
 })();
