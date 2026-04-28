@@ -11,7 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (result.apiKey) {
       apiKeyInput.value = result.apiKey.substring(0, 10) + '...'; // Show partial key
       apiKeyInput.placeholder = 'API Key already saved';
-      updateStatus('✓ API Key configured', 'success');
+      updateStatus('✓ API Key configured (Gemini 2.5 Flash)', 'success');
     } else {
       updateStatus('⚠ No API Key set', 'warning');
     }
@@ -27,7 +27,8 @@ document.addEventListener('DOMContentLoaded', () => {
       updateStatus('✗ Please enter an API key', 'error');
       return;
     }
-    chrome.storage.sync.set({ apiKey, model: 'gemini-2.5-flash' }, () => {
+    const model = 'gemini-2.5-flash'; // Default to Gemini 2.5 Flash
+    chrome.storage.sync.set({ apiKey, model }, () => {
       updateStatus('✓ API Key saved! (Using Gemini 2.5 Flash)', 'success');
       apiKeyInput.value = '';
       apiKeyInput.placeholder = 'API Key updated';
