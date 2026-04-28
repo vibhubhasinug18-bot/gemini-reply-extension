@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Gemini Reply Generator - Settings</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    body {
+      padding: 20px;
+    }
+    .options-container {
+      max-width: 500px;
+      margin: 0 auto;
+      background: white;
+      padding: 30px;
+      border-radius: 10px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    h1 {
+      margin-bottom: 30px;
+    }
+    .section {
+      margin-bottom: 30px;
+    }
+    .section-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 15px;
+      color: #333;
+    }
+    .info-box {
+      background-color: #f0f4ff;
+      border-left: 4px solid #667eea;
+      padding: 12px;
+      border-radius: 5px;
+      font-size: 13px;
+      margin-bottom: 15px;
+    }
+  </style>
+</head>
+<body>
+  <div class="options-container">
+    <h1>🤖 Gemini Reply Generator Settings</h1>
+    
+    <div class="section">
+      <div class="section-title">API Configuration</div>
+      <div class="info-box">
+        📌 Get your free API key from <a href="https://makersuite.google.com/app/apikey" target="_blank">Google AI Studio</a>
+      </div>
+      <div class="settings-section">
+        <label for="apiKey">Gemini API Key:</label>
+        <input type="password" id="apiKey" placeholder="Enter your API key" />
+        <button id="saveBtn" class="btn btn-primary">Save API Key</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Reply Preferences</div>
+      <div class="settings-section">
+        <label for="tone">Default Reply Tone:</label>
+        <select id="tone">
+          <option value="professional">Professional</option>
+          <option value="friendly">Friendly</option>
+          <option value="casual">Casual</option>
+          <option value="formal">Formal</option>
+        </select>
+      </div>
+      
+      <div class="settings-section">
+        <label for="language">Language:</label>
+        <select id="language">
+          <option value="english">English</option>
+          <option value="spanish">Spanish</option>
+          <option value="french">French</option>
+          <option value="german">German</option>
+          <option value="chinese">Chinese</option>
+          <option value="japanese">Japanese</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">About</div>
+      <div class="info-box">
+        Version 1.0.0<br>
+        Uses Google's Gemini API for intelligent reply generation.<br>
+        Your API key is stored securely in Chrome's local storage.
+      </div>
+    </div>
+
+    <div id="status" class="status" style="display:none;"></div>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const apiKeyInput = document.getElementById('apiKey');
+      const toneSelect = document.getElementById('tone');
+      const languageSelect = document.getElementById('language');
+      const saveBtn = document.getElementById('saveBtn');
+      const statusDiv = document.getElementById('status');
+
+      // Load saved settings
+      chrome.storage.sync.get(['apiKey', 'tone', 'language'], (result) => {
+        if (result.apiKey) {
+          apiKeyInput.value = result.apiKey;
+        }
+        if (result.tone) {
+          toneSelect.value = result.tone;
+        }
+        if (result.language) {
+          languageSelect.value = result.language;
+        }
+      });
+
+      // Save API Key
+      saveBtn.addEventListener('click', () => {
+        const apiKey = apiKeyInput.value.trim();
+        if (!apiKey) {
+          showStatus('Please enter an API key', 'error');
+          return;
+        }
+        chrome.storage.sync.set({ apiKey }, () => {
+          showStatus('API Key saved successfully!', 'success');
+        });
+      });
+
+      // Save tone
+      toneSelect.addEventListener('change', () => {
+        chrome.storage.sync.set({ tone: toneSelect.value }, () => {
+          showStatus('Tone preference saved', 'success');
+        });
+      });
+
+      // Save language
+      languageSelect.addEventListener('change', () => {
+        chrome.storage.sync.set({ language: languageSelect.value }, () => {
+          showStatus('Language preference saved', 'success');
+        });
+      });
+
+      function showStatus(message, type) {
+        statusDiv.textContent = message;
+        statusDiv.className = 'status ' + type;
+        statusDiv.style.display = 'block';
+        setTimeout(() => {
+          statusDiv.style.display = 'none';
+        }, 3000);
+      }
+    });
+  </script>
+</body>
+</html>
